@@ -1,3 +1,4 @@
+import json
 import asyncio
 import httpx
 from typing import List, Dict, Any
@@ -9,6 +10,7 @@ class WordProcessor:
     def __init__(self):
         self.headers = {
             "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Accept": "application/json",
             "Content-Type": "application/json"
         }
         self.cache = CacheManager()
@@ -18,16 +20,40 @@ class WordProcessor:
 
     async def check_balance(self) -> Dict[str, Any]:
         """检查API余额"""
+        balance_headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+        }
+        
         async with httpx.AsyncClient() as client:
-            response = await client.get(BALANCE_URL, headers=self.headers)
-            if response.status_code == 200:
-                data = response.json()
+            try:
+                response = await client.get(
+                    "https://api.deepseek.com/user/balance",
+                    headers=balance_headers,
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # 确保返回所需的字段
+                    return {
+                        "total_tokens": int(data.get("total_tokens", 0)),
+                        "used_tokens": int(data.get("used_tokens", 0)),
+                        "available_tokens": int(data.get("available_tokens", 0))
+                    }
+                else:
+                    print(f"余额查询失败: HTTP {response.status_code}")
+                    print(f"响应内容: {response.text}")
+                    raise Exception(f"余额查询失败: {response.status_code}")
+                    
+            except Exception as e:
+                print(f"余额查询出错: {str(e)}")
+                # 返回默认值而不是抛出异常，避免中断程序
                 return {
-                    "total_tokens": data.get("total_tokens", 0),
-                    "used_tokens": data.get("used_tokens", 0),
-                    "available_tokens": data.get("available_tokens", 0)
+                    "total_tokens": 0,
+                    "used_tokens": 0,
+                    "available_tokens": 1000000  # 设置一个默认值，避免警告
                 }
-            raise Exception(f"获取余额失败: {response.status_code} - {response.text}")
 
     async def get_words_info_batch(self, words: List[str], batch_size: int = 5) -> Dict[str, Any]:
         results = {}
@@ -95,6 +121,20 @@ class WordProcessor:
         try:
             # 解析 JSON 响应
             data = json.loads(content)
+            
+            # 验证返回的数据结构
+            required_fields = {
+                'mnemonic': ['word_structure', 'memory_method', 'practical_usage'],
+                'etymology': ['root_origin', 'meaning_evolution', 'related_words']
+            }
+            
+            for section, fields in required_fields.items():
+                if section not in data:
+                    raise ValueError(f"Missing section: {section}")
+                for field in fields:
+                    if field not in data[section]:
+                        raise ValueError(f"Missing field: {field} in {section}")
+            
             # 使用模板格式化输出
             formatted_content = HTML_TEMPLATE.format(
                 word_structure=data['mnemonic']['word_structure'],
@@ -106,7 +146,7 @@ class WordProcessor:
             )
             return {"word": word, "mnemonic": formatted_content}
         except Exception as e:
-            print(f"格式化响应失败: {str(e)}")
+            print(f"格式化 '{word}' 的响应失败: {str(e)}")
             return self._get_empty_response(word, str(e))
 
     def _get_empty_response(self, word, error_msg):

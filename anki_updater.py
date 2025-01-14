@@ -17,22 +17,38 @@ class AnkiUpdater:
         try:
             balance = await self.processor.check_balance()
             print("\nAPI余额信息:")
-            print(f"总计额度: {balance['total_tokens']:,} tokens")
-            print(f"已使用额度: {balance['used_tokens']:,} tokens")
-            print(f"剩余额度: {balance['available_tokens']:,} tokens")
             
-            # 估算处理成本
-            avg_tokens_per_word = 500  # 估计每个单词平均使用的tokens
-            estimated_total = avg_tokens_per_word * self.batch_size
-            print(f"\n预估本批次({self.batch_size}个单词)将使用约 {estimated_total:,} tokens")
-            
-            if balance['available_tokens'] < estimated_total:
-                print("\n警告: 剩余额度可能不足以完成本次处理！")
-                return False
+            # 如果获取到真实余额
+            if balance['total_tokens'] > 0:
+                print(f"总计额度: {balance['total_tokens']:,} tokens")
+                print(f"已使用额度: {balance['used_tokens']:,} tokens")
+                print(f"剩余额度: {balance['available_tokens']:,} tokens")
+                
+                # 估算处理成本
+                avg_tokens_per_word = 500
+                estimated_total = avg_tokens_per_word * self.batch_size
+                print(f"\n预估本批次({self.batch_size}个单词)将使用约 {estimated_total:,} tokens")
+                
+                if balance['available_tokens'] < estimated_total:
+                    print("\n警告: 剩余额度可能不足以完成本次处理！")
+                    return await self._confirm_continue()
+            else:
+                print("无法获取准确的余额信息，但程序可以继续运行")
+                print("建议在处理少量单词后检查效果")
+                return await self._confirm_continue()
+                
             return True
+            
         except Exception as e:
-            print(f"检查余额失败: {str(e)}")
-            return False
+            print(f"检查余额时出错: {str(e)}")
+            print("将继续执行，但请注意监控API使用情况")
+            return await self._confirm_continue()
+
+    async def _confirm_continue(self):
+        """询问用户是否继续"""
+        if self.test_mode:
+            return input("\n是否继续处理？(y/n): ").lower() == 'y'
+        return True  # 自动模式下默认继续
 
     async def update_cards(self, deck_name):
         encoded_deck_name = urllib.parse.quote(deck_name)

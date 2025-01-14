@@ -2,7 +2,7 @@ import asyncio
 import requests
 import urllib.parse
 from config import ANKI_CONNECT_URL
-from word_processor import WordProcessor
+from word_processor import WordProcessor, DeepSeekAPIError
 
 class AnkiUpdater:
     def __init__(self, batch_size=20, api_batch_size=5, test_mode=True):
@@ -123,6 +123,7 @@ class AnkiUpdater:
         """处理一批卡片"""
         words_to_update = []
         card_map = {}
+        errors = []
         
         # 收集需要更新的单词
         for card_id in batch_cards:
@@ -133,31 +134,60 @@ class AnkiUpdater:
                     words_to_update.append(word)
                     card_map[word] = {"id": card_id, "fields": fields}
             except Exception as e:
-                print(f"获取卡片 {card_id} 信息失败: {str(e)}")
+                errors.append(f"获取卡片 {card_id} 信息失败: {str(e)}")
                 continue
 
         if not words_to_update:
+            if errors:
+                print("\n处理过程中出现以下错误:")
+                for error in errors:
+                    print(f"- {error}")
             return
 
-        # 批量获取单词信息
-        results = await self.processor.get_words_info_batch(words_to_update, batch_size=self.api_batch_size)
-        
-        # 更新卡片
-        for word, info in results.items():
-            card_info = card_map.get(word)
-            if card_info and info.get("mnemonic"):
-                for attempt in range(self.max_retries):
+        try:
+            # 批量获取单词信息
+            results = await self.processor.get_words_info_batch(words_to_update, batch_size=self.api_batch_size)
+            
+            # 更新卡片
+            success_count = 0
+            for word, info in results.items():
+                card_info = card_map.get(word)
+                if card_info and info.get("mnemonic"):
                     try:
-                        self._update_card_field(card_info["id"], "mnemonic", info["mnemonic"])
-                        self._add_tag_to_note(card_info["id"])
-                        print(f"已更新卡片 '{word}'")
-                        break
+                        await self._update_single_card(card_info["id"], word, info["mnemonic"])
+                        success_count += 1
                     except Exception as e:
-                        if attempt == self.max_retries - 1:
-                            print(f"更新卡片 '{word}' 失败: {str(e)}")
-                        else:
-                            await asyncio.sleep(1)
-                            continue
+                        errors.append(f"更新卡片 '{word}' 失败: {str(e)}")
+
+            # 显示处理结果统计
+            print(f"\n批次处理完成:")
+            print(f"- 成功更新: {success_count} 张卡片")
+            if errors:
+                print(f"- 失败数量: {len(errors)} 个")
+                print("\n错误详情:")
+                for error in errors:
+                    print(f"- {error}")
+            
+        except DeepSeekAPIError as e:
+            print(f"\nDeepSeek API 错误:")
+            print(e.get_error_message())
+            raise
+        except Exception as e:
+            print(f"\n未预期的错误: {str(e)}")
+            raise
+
+    async def _update_single_card(self, card_id: int, word: str, content: str):
+        """更新单个卡片内容"""
+        for attempt in range(self.max_retries):
+            try:
+                self._update_card_field(card_id, "mnemonic", content)
+                self._add_tag_to_note(card_id)
+                print(f"已更新卡片 '{word}'")
+                return
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    raise Exception(f"更新失败: {str(e)}")
+                await asyncio.sleep(1)
 
     def _get_unprocessed_cards(self, deck_name):
         """获取未添加标签的卡片"""

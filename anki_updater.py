@@ -5,39 +5,51 @@ from config import ANKI_CONNECT_URL
 from word_processor import WordProcessor
 
 class AnkiUpdater:
-    def __init__(self):
+    def __init__(self, batch_size=20, api_batch_size=5):
         self.processor = WordProcessor()
-        self.batch_size = 20  # 减小批次大小以提高稳定性
-        self.max_retries = 3  # 添加重试次数
+        self.batch_size = batch_size  # 每批处理的卡片数量
+        self.api_batch_size = api_batch_size  # API调用的批次大小
+        self.max_retries = 3
 
     async def update_cards(self, deck_name):
-        # 对牌组名称进行URL编码以支持中文
         encoded_deck_name = urllib.parse.quote(deck_name)
         
         try:
-            # 获取未处理的卡片
             unprocessed_cards = self._get_unprocessed_cards(encoded_deck_name)
             if not unprocessed_cards:
                 print("没有需要更新的卡片")
                 return
 
             total_cards = len(unprocessed_cards)
-            print(f"找到 {total_cards} 张未处理的卡片")
+            print(f"\n找到 {total_cards} 张未处理的卡片")
+            print(f"当前设置: 每批处理 {self.batch_size} 张卡片, API每次处理 {self.api_batch_size} 个单词")
             
-            # 分批处理卡片，添加进度显示
+            # 添加确认提示
+            confirm = input("\n是否继续处理？(y/n): ").strip().lower()
+            if confirm != 'y':
+                print("已取消处理")
+                return
+            
             processed_count = 0
             for i in range(0, total_cards, self.batch_size):
                 batch_cards = unprocessed_cards[i:i + self.batch_size]
                 current_batch = min(i + self.batch_size, total_cards)
-                print(f"\n进度: {processed_count}/{total_cards}")
-                print(f"处理第 {i + 1} 到 {current_batch} 张卡片...")
+                
+                print(f"\n处理进度: [{processed_count}/{total_cards}] ({(processed_count/total_cards)*100:.1f}%)")
+                print(f"正在处理第 {i + 1} 到 {current_batch} 张卡片...")
                 
                 await self._process_batch(batch_cards)
                 processed_count = current_batch
                 
-                # 每处理完一批次后保存进度
-                print(f"批次完成，总进度: {processed_count}/{total_cards}")
+                print(f"批次完成！当前进度: {processed_count}/{total_cards} ({(processed_count/total_cards)*100:.1f}%)")
                 
+                # 每批次完成后询问是否继续
+                if processed_count < total_cards:
+                    continue_process = input("\n继续处理下一批？(y/n): ").strip().lower()
+                    if continue_process != 'y':
+                        print("\n用户选择停止处理")
+                        break
+
         except KeyboardInterrupt:
             print("\n用户中断处理")
         except Exception as e:
@@ -64,7 +76,7 @@ class AnkiUpdater:
             return
 
         # 批量获取单词信息
-        results = await self.processor.get_words_info_batch(words_to_update, batch_size=5)
+        results = await self.processor.get_words_info_batch(words_to_update, batch_size=self.api_batch_size)
         
         # 更新卡片
         for word, info in results.items():
@@ -129,10 +141,29 @@ class AnkiUpdater:
             print(f"添加标签时出错: {str(e)}")
 
 def main():
-    updater = AnkiUpdater()
-    deck_name = input("请输入牌组名称 (默认为'test'): ").strip() or "test"
+    print("欢迎使用Anki卡片更新工具！\n")
+    
+    # 获取批处理参数
     try:
+        batch_size = int(input("请输入每批处理的卡片数量 (默认20): ").strip() or "20")
+        api_batch_size = int(input("请输入API每次处理的单词数量 (默认5): ").strip() or "5")
+        deck_name = input("请输入牌组名称 (默认为'test'): ").strip() or "test"
+        
+        print("\n参数确认:")
+        print(f"- 每批处理卡片数: {batch_size}")
+        print(f"- API批次大小: {api_batch_size}")
+        print(f"- 目标牌组: {deck_name}")
+        
+        confirm = input("\n确认开始处理？(y/n): ").strip().lower()
+        if confirm != 'y':
+            print("已取消操作")
+            return
+            
+        updater = AnkiUpdater(batch_size=batch_size, api_batch_size=api_batch_size)
         asyncio.run(updater.update_cards(deck_name))
+        
+    except ValueError:
+        print("输入的数字格式不正确，请输入有效的数字。")
     except KeyboardInterrupt:
         print("\n程序被用户中断")
     except Exception as e:

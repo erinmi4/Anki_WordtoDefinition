@@ -11,8 +11,35 @@ class AnkiUpdater:
         self.api_batch_size = api_batch_size  # API调用的批次大小
         self.max_retries = 3
 
+    async def check_and_display_balance(self):
+        """检查并显示API余额"""
+        try:
+            balance = await self.processor.check_balance()
+            print("\nAPI余额信息:")
+            print(f"总计额度: {balance['total_tokens']:,} tokens")
+            print(f"已使用额度: {balance['used_tokens']:,} tokens")
+            print(f"剩余额度: {balance['available_tokens']:,} tokens")
+            
+            # 估算处理成本
+            avg_tokens_per_word = 500  # 估计每个单词平均使用的tokens
+            estimated_total = avg_tokens_per_word * self.batch_size
+            print(f"\n预估本批次({self.batch_size}个单词)将使用约 {estimated_total:,} tokens")
+            
+            if balance['available_tokens'] < estimated_total:
+                print("\n警告: 剩余额度可能不足以完成本次处理！")
+                return False
+            return True
+        except Exception as e:
+            print(f"检查余额失败: {str(e)}")
+            return False
+
     async def update_cards(self, deck_name):
         encoded_deck_name = urllib.parse.quote(deck_name)
+        
+        # 先检查余额
+        if not await self.check_and_display_balance():
+            if input("\n是否继续处理？(y/n): ").lower() != 'y':
+                return
         
         try:
             unprocessed_cards = self._get_unprocessed_cards(encoded_deck_name)

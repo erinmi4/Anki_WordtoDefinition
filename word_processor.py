@@ -6,6 +6,31 @@ from config import (DEEPSEEK_API_KEY, SYSTEM_PROMPT, DEEPSEEK_API_BASE,
                    API_CONFIG, HTML_TEMPLATE, BALANCE_URL)
 from cache_manager import CacheManager
 
+# 添加 DeepSeek API 错误代码映射
+DEEPSEEK_ERROR_CODES = {
+    400: "请求参数错误",
+    401: "API密钥无效或过期",
+    403: "没有访问权限",
+    404: "请求的资源不存在",
+    429: "请求太过频繁，超出限制",
+    500: "服务器内部错误",
+    502: "服务器暂时无法处理请求",
+    503: "服务暂时不可用",
+    504: "服务器响应超时"
+}
+
+class DeepSeekAPIError(Exception):
+    """DeepSeek API 错误类"""
+    def __init__(self, status_code: int, message: str, raw_response: str = None):
+        self.status_code = status_code
+        self.message = message
+        self.raw_response = raw_response
+        super().__init__(self.get_error_message())
+
+    def get_error_message(self) -> str:
+        error_desc = DEEPSEEK_ERROR_CODES.get(self.status_code, "未知错误")
+        return f"API错误 {self.status_code}: {error_desc}\n详细信息: {self.message}"
+
 class WordProcessor:
     def __init__(self):
         self.headers = {
@@ -103,19 +128,40 @@ class WordProcessor:
                         formatted = self._format_response(word, content)
                         self.cache.set(word, formatted)
                         return formatted
-                    elif response.status_code == 429:
+                    else:
+                        error_data = response.json() if response.text else {}
+                        error_message = error_data.get('error', {}).get('message', '未知错误')
+                        
+                        if response.status_code == 429:
+                            retry_after = int(response.headers.get('Retry-After', self.retry_delay))
+                            print(f"请求频率限制，等待 {retry_after} 秒后重试...")
+                            await asyncio.sleep(retry_after)
+                            continue
+                        
+                        raise DeepSeekAPIError(
+                            status_code=response.status_code,
+                            message=error_message,
+                            raw_response=response.text
+                        )
+                        
+                except DeepSeekAPIError as e:
+                    if attempt < self.retry_count - 1:
+                        print(f"处理单词 '{word}' 时出错: {str(e)}")
+                        print(f"第 {attempt + 1} 次重试中...")
                         await asyncio.sleep(self.retry_delay * (attempt + 1))
                         continue
-                    else:
-                        response.raise_for_status()
-                        
+                    raise
                 except Exception as e:
                     if attempt < self.retry_count - 1:
+                        print(f"未预期的错误: {str(e)}")
                         await asyncio.sleep(self.retry_delay * (attempt + 1))
                         continue
                     raise
             
-            raise Exception(f"重试 {self.retry_count} 次后失败")
+            raise DeepSeekAPIError(
+                status_code=500,
+                message=f"重试 {self.retry_count} 次后仍然失败"
+            )
 
     def _format_response(self, word: str, content: str) -> Dict[str, Any]:
         try:

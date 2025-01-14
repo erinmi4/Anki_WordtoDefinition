@@ -5,10 +5,11 @@ from config import ANKI_CONNECT_URL
 from word_processor import WordProcessor
 
 class AnkiUpdater:
-    def __init__(self, batch_size=20, api_batch_size=5):
+    def __init__(self, batch_size=20, api_batch_size=5, test_mode=True):
         self.processor = WordProcessor()
         self.batch_size = batch_size  # 每批处理的卡片数量
         self.api_batch_size = api_batch_size  # API调用的批次大小
+        self.test_mode = test_mode
         self.max_retries = 3
 
     async def check_and_display_balance(self):
@@ -50,6 +51,7 @@ class AnkiUpdater:
             total_cards = len(unprocessed_cards)
             print(f"\n找到 {total_cards} 张未处理的卡片")
             print(f"当前设置: 每批处理 {self.batch_size} 张卡片, API每次处理 {self.api_batch_size} 个单词")
+            print(f"运行模式: {'测试模式' if self.test_mode else '自动模式'}")
             
             # 添加确认提示
             confirm = input("\n是否继续处理？(y/n): ").strip().lower()
@@ -57,8 +59,19 @@ class AnkiUpdater:
                 print("已取消处理")
                 return
             
-            processed_count = 0
-            for i in range(0, total_cards, self.batch_size):
+            # 处理卡片
+            await self._process_all_cards(unprocessed_cards, total_cards)
+
+        except KeyboardInterrupt:
+            print("\n用户中断处理")
+        except Exception as e:
+            print(f"处理过程中出错: {str(e)}")
+
+    async def _process_all_cards(self, unprocessed_cards, total_cards):
+        processed_count = 0
+        
+        for i in range(0, total_cards, self.batch_size):
+            try:
                 batch_cards = unprocessed_cards[i:i + self.batch_size]
                 current_batch = min(i + self.batch_size, total_cards)
                 
@@ -70,17 +83,25 @@ class AnkiUpdater:
                 
                 print(f"批次完成！当前进度: {processed_count}/{total_cards} ({(processed_count/total_cards)*100:.1f}%)")
                 
-                # 每批次完成后询问是否继续
-                if processed_count < total_cards:
+                # 测试模式下询问是否继续
+                if self.test_mode and processed_count < total_cards:
                     continue_process = input("\n继续处理下一批？(y/n): ").strip().lower()
                     if continue_process != 'y':
                         print("\n用户选择停止处理")
                         break
-
-        except KeyboardInterrupt:
-            print("\n用户中断处理")
-        except Exception as e:
-            print(f"处理过程中出错: {str(e)}")
+                elif not self.test_mode:
+                    # 非测试模式下添加短暂延迟
+                    await asyncio.sleep(1)
+                    
+            except Exception as e:
+                print(f"\n处理批次时出错: {str(e)}")
+                if self.test_mode:
+                    if input("\n是否继续处理下一批？(y/n): ").lower() != 'y':
+                        break
+                else:
+                    print("继续处理下一批...")
+                    await asyncio.sleep(2)  # 错误后稍长的延迟
+                    continue
 
     async def _process_batch(self, batch_cards):
         """处理一批卡片"""
@@ -172,11 +193,17 @@ def main():
     
     # 获取批处理参数
     try:
+        # 选择运行模式
+        mode = input("请选择运行模式 (1: 测试模式, 2: 自动模式) [默认:1]: ").strip() or "1"
+        test_mode = mode == "1"
+        
+        # 获取处理参数
         batch_size = int(input("请输入每批处理的卡片数量 (默认20): ").strip() or "20")
         api_batch_size = int(input("请输入API每次处理的单词数量 (默认5): ").strip() or "5")
         deck_name = input("请输入牌组名称 (默认为'test'): ").strip() or "test"
         
         print("\n参数确认:")
+        print(f"- 运行模式: {'测试模式' if test_mode else '自动模式'}")
         print(f"- 每批处理卡片数: {batch_size}")
         print(f"- API批次大小: {api_batch_size}")
         print(f"- 目标牌组: {deck_name}")
@@ -186,7 +213,11 @@ def main():
             print("已取消操作")
             return
             
-        updater = AnkiUpdater(batch_size=batch_size, api_batch_size=api_batch_size)
+        updater = AnkiUpdater(
+            batch_size=batch_size,
+            api_batch_size=api_batch_size,
+            test_mode=test_mode
+        )
         asyncio.run(updater.update_cards(deck_name))
         
     except ValueError:

@@ -6,14 +6,43 @@ BALANCE_URL = f"{DEEPSEEK_API_BASE}/user/balance"
 # API 配置
 API_CONFIG = {
     "model": "deepseek-chat",
-    "temperature": 0.3,
-    "top_p": 0.95,
-    "max_tokens": 800,
-    "frequency_penalty": 0.3,
-    "presence_penalty": 0.3,
-    "response_format": {"type": "json_object"},  # 启用 JSON 模式
+    "temperature": 0.1,  # 降低随机性，提高一致性
+    "top_p": 0.8,       # 调整采样范围
+    "max_tokens": 1000,
+    "frequency_penalty": 0.1,
+    "presence_penalty": 0.1,
+    "response_format": {"type": "json_object"},  # 使用 JSON 模式
     "stop": ["</div>"],
-    "stream": False
+    "stream": False,
+    "seed": 42,         # 添加随机种子以保持一致性
+    "functions": [{      # 添加函数调用
+        "name": "word_analysis",
+        "description": "分析英语单词的记忆方法和词源",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mnemonic": {
+                    "type": "object",
+                    "properties": {
+                        "word_structure": {"type": "string", "description": "词形分析"},
+                        "memory_method": {"type": "string", "description": "记忆方法"},
+                        "practical_usage": {"type": "string", "description": "实际应用场景"}
+                    },
+                    "required": ["word_structure", "memory_method", "practical_usage"]
+                },
+                "etymology": {
+                    "type": "object",
+                    "properties": {
+                        "root_origin": {"type": "string", "description": "词根来源"},
+                        "meaning_evolution": {"type": "string", "description": "词义演变"},
+                        "related_words": {"type": "string", "description": "相关词汇"}
+                    },
+                    "required": ["root_origin", "meaning_evolution", "related_words"]
+                }
+            },
+            "required": ["mnemonic", "etymology"]
+        }
+    }]
 }
 
 SYSTEM_PROMPT = """你是一个专业的英语词汇教师。请以JSON格式返回单词分析，包含以下字段：

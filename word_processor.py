@@ -41,7 +41,7 @@ class WordProcessor:
         self.cache = CacheManager()
         self.retry_count = 3
         self.retry_delay = 2
-        self.semaphore = asyncio.Semaphore(3)  # 限制并发请求数
+        self.semaphore = asyncio.Semaphore(5)  # 增加并发数
 
     async def check_balance(self) -> Dict[str, Any]:
         """检查API余额"""
@@ -118,16 +118,25 @@ class WordProcessor:
                             "messages": [
                                 {"role": "system", "content": SYSTEM_PROMPT},
                                 {"role": "user", "content": f"分析单词: {word}"}
-                            ]
+                            ],
+                            "function_call": {
+                                "name": "word_analysis"
+                            }
                         }
                     )
                     
                     if response.status_code == 200:
                         result = response.json()
-                        content = result['choices'][0]['message']['content']
+                        # 使用函数调用的返回结果
+                        if 'function_call' in result['choices'][0]['message']:
+                            content = json.loads(result['choices'][0]['message']['function_call']['arguments'])
+                        else:
+                            content = json.loads(result['choices'][0]['message']['content'])
+                            
                         formatted = self._format_response(word, content)
                         self.cache.set(word, formatted)
                         return formatted
+                    
                     else:
                         error_data = response.json() if response.text else {}
                         error_message = error_data.get('error', {}).get('message', '未知错误')
@@ -163,11 +172,9 @@ class WordProcessor:
                 message=f"重试 {self.retry_count} 次后仍然失败"
             )
 
-    def _format_response(self, word: str, content: str) -> Dict[str, Any]:
+    def _format_response(self, word: str, content: Dict[str, Any]) -> Dict[str, Any]:
+        """处理已经解析的 JSON 内容"""
         try:
-            # 解析 JSON 响应
-            data = json.loads(content)
-            
             # 验证返回的数据结构
             required_fields = {
                 'mnemonic': ['word_structure', 'memory_method', 'practical_usage'],
@@ -175,20 +182,20 @@ class WordProcessor:
             }
             
             for section, fields in required_fields.items():
-                if section not in data:
+                if section not in content:
                     raise ValueError(f"Missing section: {section}")
                 for field in fields:
-                    if field not in data[section]:
+                    if field not in content[section]:
                         raise ValueError(f"Missing field: {field} in {section}")
             
-            # 使用模板格式化输出
+            # 直接使用数据结构
             formatted_content = HTML_TEMPLATE.format(
-                word_structure=data['mnemonic']['word_structure'],
-                memory_method=data['mnemonic']['memory_method'],
-                practical_usage=data['mnemonic']['practical_usage'],
-                root_origin=data['etymology']['root_origin'],
-                meaning_evolution=data['etymology']['meaning_evolution'],
-                related_words=data['etymology']['related_words']
+                word_structure=content['mnemonic']['word_structure'],
+                memory_method=content['mnemonic']['memory_method'],
+                practical_usage=content['mnemonic']['practical_usage'],
+                root_origin=content['etymology']['root_origin'],
+                meaning_evolution=content['etymology']['meaning_evolution'],
+                related_words=content['etymology']['related_words']
             )
             return {"word": word, "mnemonic": formatted_content}
         except Exception as e:
